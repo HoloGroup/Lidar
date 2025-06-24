@@ -10,6 +10,8 @@ public class ModelListWindow : MonoBehaviour
 
     public bool ListenForModelReciever { get; set; }
 
+    private bool _isInitialized = false;
+
     private void OnEnable()
     {
         ClearList();
@@ -43,26 +45,28 @@ public class ModelListWindow : MonoBehaviour
 
     private async void FillModelList()
     {
-        await VRTeleportation_NetworkBehviour.Instance.Connect();
-
-        VRTeleportation_NetworkBehviour.Instance.OnModelListReceived += (list) =>
+        if(!_isInitialized)
         {
-            VRTeleportation_NetworkBehviour.Instance.OnModelListReceived = null;
-            ClearList();
+            _isInitialized = true;
 
-            var i = 0;
-            list.Reverse();
-            foreach (var model in list)
+            VRTeleportation_NetworkBehviour.Instance.OnModelListReceived += (list) =>
             {
-                var go = Instantiate(AppManager.Instance.ModelListItem, content);
-                
-                // Init model item
-                string name = list[i];
-                go.GetComponent<ModelListItem>().Name = name;
+                ClearList();
 
-                i++;
-            }
-        };
+                var i = 0;
+                list.Reverse();
+                foreach (var model in list)
+                {
+                    var go = Instantiate(AppManager.Instance.ModelListItem, content);
+
+                    // Init model item
+                    var mli = go.GetComponent<ModelListItem>();
+                    mli.Initialize(list[i]);
+                    i++;
+                }
+            };
+        }
+
 
         VRTeleportation_NetworkBehviour.Instance.SendGetModelList();
     }

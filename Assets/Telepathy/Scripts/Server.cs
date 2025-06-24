@@ -368,7 +368,7 @@ namespace Telepathy
 
                 // peek first. allows us to process the first queued entry while
                 // still keeping the pooled byte[] alive by not removing anything.
-                if (receivePipe.TryPeek(out int connectionId, out EventType eventType, out ArraySegment<byte> message))
+                if (receivePipe.TryPeek(out int connectionId, out EventType eventType, out ArraySegment<byte> message, out bool bigMessage))
                 {
                     switch (eventType)
                     {
@@ -388,7 +388,7 @@ namespace Telepathy
 
                     // IMPORTANT: now dequeue and return it to pool AFTER we are
                     //            done processing the event.
-                    receivePipe.TryDequeue();
+                    receivePipe.TryDequeue(bigMessage);
                 }
                 // no more messages. stop the loop.
                 else break;

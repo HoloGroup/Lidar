@@ -21,6 +21,7 @@ namespace Telepathy
         //
         // IMPORTANT: lock{} all usages!
         readonly Queue<ArraySegment<byte>> queue = new Queue<ArraySegment<byte>>();
+        readonly Queue<ArraySegment<byte>> queueBigMessages = new Queue<ArraySegment<byte>>();
 
         // byte[] pool to avoid allocations
         // Take & Return is beautifully encapsulated in the pipe.
@@ -30,9 +31,11 @@ namespace Telepathy
         // IMPORTANT: lock{} all usages!
         Pool<byte[]> pool;
 
+        int _maxMessageSize = 0;
         // constructor
         public MagnificentSendPipe(int MaxMessageSize)
         {
+            _maxMessageSize = MaxMessageSize;
             // initialize pool to create max message sized byte[]s each time
             pool = new Pool<byte[]>(() => new byte[MaxMessageSize]);
         }
@@ -55,6 +58,8 @@ namespace Telepathy
         // -> the segment's array is only used until Enqueue() returns!
         public void Enqueue(ArraySegment<byte> message)
         {
+            if (message.Count == 0)
+                UnityEngine.Debug.Log($"Has ZERO lenght message!!\n{new System.Diagnostics.StackTrace()}");
             // pool & queue usage always needs to be locked
             lock (this)
             {
@@ -62,7 +67,7 @@ namespace Telepathy
                 // it into a byte[] that we can queue safely.
 
                 // get one from the pool first to avoid allocations
-                byte[] bytes = pool.Take();
+                byte[] bytes = (message.Count > _maxMessageSize) ? new byte[message.Count] : pool.Take();
 
                 // copy into it
                 Buffer.BlockCopy(message.Array, message.Offset, bytes, 0, message.Count);
@@ -71,7 +76,10 @@ namespace Telepathy
                 ArraySegment<byte> segment = new ArraySegment<byte>(bytes, 0, message.Count);
 
                 // now enqueue it
-                queue.Enqueue(segment);
+                if (message.Count > _maxMessageSize)
+                    queueBigMessages.Enqueue(segment);
+                else
+                    queue.Enqueue(segment);
             }
         }
 
@@ -105,7 +113,7 @@ namespace Telepathy
             {
                 // do nothing if empty
                 packetSize = 0;
-                if (queue.Count == 0)
+                if (queue.Count == 0 && queueBigMessages.Count == 0)
                     return false;
 
                 // we might have multiple pending messages. merge into one
@@ -115,8 +123,9 @@ namespace Telepathy
                 //            chunks, but we STILL pack all pending messages
                 //            into one large payload so we only give it to TCP
                 //            ONCE. This is HUGE for performance so we keep it!
-                packetSize = 0;
                 foreach (ArraySegment<byte> message in queue)
+                    packetSize += 4 + message.Count; // header + content
+                foreach (ArraySegment<byte> message in queueBigMessages)
                     packetSize += 4 + message.Count; // header + content
 
                 // create payload buffer if not created yet or previous one is
@@ -144,6 +153,26 @@ namespace Telepathy
                     pool.Return(message.Array);
                 }
 
+                // BigMessages
+
+                // dequeue all byte[] messages and serialize into the packet
+                while (queueBigMessages.Count > 0)
+                {
+                    // dequeue
+                    ArraySegment<byte> message = queueBigMessages.Dequeue();
+
+                    // write header (size) into buffer at position
+                    Utils.IntToBytesBigEndianNonAlloc(message.Count, payload, position);
+                    position += 4;
+
+                    // copy message into payload at position
+                    Buffer.BlockCopy(message.Array, message.Offset, payload, position, message.Count);
+                    position += message.Count;
+
+                    // return to pool so it can be reused (avoids allocations!)
+                    //pool.Return(message.Array); // big messages do not need return to pool
+                }
+
                 // we did serialize something
                 return true;
             }
@@ -159,6 +188,7 @@ namespace Telepathy
                 {
                     pool.Return(queue.Dequeue().Array);
                 }
+                queueBigMessages.Clear();
             }
         }
     }

@@ -1,3 +1,6 @@
+using GLTFast;
+using GLTFast.Logging;
+using GLTFast.Materials;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -373,5 +376,65 @@ public class VRTeleportation_VRModelSerializer
         }
 
         return parent;
+    }
+}
+
+public class CustomMaterialGenerator : IMaterialGenerator
+{
+    public Material GenerateMaterial(GLTFast.Schema.Material gltfMaterial, IGltfReadable gltf, bool pointsSupport = false)
+    {
+        return AppManager.Instance.DeserializeMaterial;
+    }
+
+    public Material GetDefaultMaterial(bool pointsSupport = false)
+    {
+        return AppManager.Instance.DeserializeMaterial;
+    }
+
+    public void SetLogger(ICodeLogger logger)
+    {
+
+    }
+}
+
+public class CustomLogger : ICodeLogger
+{
+    public void Error(LogCode code, params string[] messages)
+    {
+        foreach(var msg in messages)
+        {
+            Debug.LogError(msg);
+        }
+    }
+
+    public void Error(string message)
+    {
+        Debug.LogError(message);
+    }
+
+    public void Info(LogCode code, params string[] messages)
+    {
+        foreach (var msg in messages)
+        {
+            Debug.Log(msg);
+        }
+    }
+
+    public void Info(string message)
+    {
+        Debug.Log(message);
+    }
+
+    public void Warning(LogCode code, params string[] messages)
+    {
+        foreach (var msg in messages)
+        {
+            Debug.LogWarning(msg);
+        }
+    }
+
+    public void Warning(string message)
+    {
+        Debug.LogWarning(message);
     }
 }

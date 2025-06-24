@@ -8,6 +8,7 @@
 // => easy to test
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 
 namespace Telepathy
 {
@@ -34,6 +35,7 @@ namespace Telepathy
         //
         // IMPORTANT: lock{} all usages!
         readonly Queue<Entry> queue = new Queue<Entry>();
+        readonly Queue<Entry> queueBigMessages = new Queue<Entry>();
 
         // byte[] pool to avoid allocations
         // Take & Return is beautifully encapsulated in the pipe.
@@ -51,9 +53,11 @@ namespace Telepathy
         // => let's use a simpler per-connectionId counter for now
         Dictionary<int, int> queueCounter = new Dictionary<int, int>();
 
+        int _maxMessageSize = 0;
         // constructor
         public MagnificentReceivePipe(int MaxMessageSize)
         {
+            _maxMessageSize = MaxMessageSize;
             // initialize pool to create max message sized byte[]s each time
             pool = new Pool<byte[]>(() => new byte[MaxMessageSize]);
         }
@@ -103,7 +107,7 @@ namespace Telepathy
                     // it into a byte[] that we can queue safely.
 
                     // get one from the pool first to avoid allocations
-                    byte[] bytes = pool.Take();
+                    byte[] bytes = (message.Count > _maxMessageSize) ? new byte[message.Count] : pool.Take();
 
                     // copy into it
                     Buffer.BlockCopy(message.Array, message.Offset, bytes, 0, message.Count);
@@ -116,7 +120,11 @@ namespace Telepathy
                 // IMPORTANT: pass the segment around pool byte[],
                 //            NOT the 'message' that is only valid until returning!
                 Entry entry = new Entry(connectionId, eventType, segment);
-                queue.Enqueue(entry);
+
+                if (message.Count > _maxMessageSize)
+                    queueBigMessages.Enqueue(entry);
+                else
+                    queue.Enqueue(entry);
 
                 // increase counter for this connectionId
                 int oldCount = Count(connectionId);
@@ -132,8 +140,10 @@ namespace Telepathy
         // => see TryDequeue comments!
         //
         // IMPORTANT: TryPeek & Dequeue need to be called from the SAME THREAD!
-        public bool TryPeek(out int connectionId, out EventType eventType, out ArraySegment<byte> data)
+        public bool TryPeek(out int connectionId, out EventType eventType, out ArraySegment<byte> data, out bool bigMessage)
         {
+            bigMessage = false;
+
             connectionId = 0;
             eventType = EventType.Disconnected;
             data = default;
@@ -141,6 +151,16 @@ namespace Telepathy
             // pool & queue usage always needs to be locked
             lock (this)
             {
+                if (queueBigMessages.Count > 0)
+                {
+                    Entry entry = queueBigMessages.Peek();
+                    connectionId = entry.connectionId;
+                    eventType = entry.eventType;
+                    data = entry.data;
+                    bigMessage = true;
+                    return true;
+                }
+
                 if (queue.Count > 0)
                 {
                     Entry entry = queue.Peek();
@@ -149,6 +169,7 @@ namespace Telepathy
                     data = entry.data;
                     return true;
                 }
+
                 return false;
             }
         }
@@ -164,11 +185,32 @@ namespace Telepathy
         //    pipe pooling to avoid allocations!
         //
         // IMPORTANT: TryPeek & Dequeue need to be called from the SAME THREAD!
-        public bool TryDequeue()
+        public bool TryDequeue(bool bigMeesage)
         {
             // pool & queue usage always needs to be locked
             lock (this)
             {
+                if (bigMeesage)
+                {
+                    if (queueBigMessages.Count > 0)
+                    {
+                        // dequeue from queue
+                        Entry entry = queueBigMessages.Dequeue();
+
+                        // decrease counter for this connectionId
+                        queueCounter[entry.connectionId]--;
+
+                        // remove if zero. don't want to keep old connectionIds in
+                        // there forever, it would cause slowly growing memory.
+                        if (queueCounter[entry.connectionId] == 0)
+                            queueCounter.Remove(entry.connectionId);
+
+                        return true;
+                    }
+
+                    return false;
+                }
+
                 if (queue.Count > 0)
                 {
                     // dequeue from queue
@@ -191,6 +233,8 @@ namespace Telepathy
 
                     return true;
                 }
+                
+
                 return false;
             }
         }
@@ -213,6 +257,8 @@ namespace Telepathy
                         pool.Return(entry.data.Array);
                     }
                 }
+
+                queueBigMessages.Clear();
 
                 // clear counter too
                 queueCounter.Clear();

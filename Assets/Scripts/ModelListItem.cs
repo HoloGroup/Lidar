@@ -1,3 +1,5 @@
+using GLTFast;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -15,11 +17,13 @@ public class ModelListItem : MonoBehaviour
     [SerializeField] private Image modelDownloadingImage;
     [SerializeField] private TMP_Text modelStatusText;
 
-    public string Name { get { return _name; } set { Initialize(value); } }
+    public string Name { get { return _name; }}
     private string _name;
     private string _path;
 
     private bool _listenForModelReciever;
+
+    private ModelInfo _info;
 
     private void Start()
     {
@@ -35,32 +39,41 @@ public class ModelListItem : MonoBehaviour
         modelDeleteButton.onClick.RemoveListener(OnModelDeleteButtonClick);
     }
 
+    internal void Initialize(ModelInfo modelInfo)
+    {
+        _info = modelInfo;
+        Initialize(_info.Name);
+    }
+
     private void Initialize(string value)
     {
         // Init name
         _name = value;
-        _path = Path.Combine(Application.persistentDataPath, _name + ".dat");
+        _path = Path.Combine(Application.persistentDataPath, _name + ".glb");
+        Debug.Log(_path);
         modelNameText.text = _name;
+
+        VRTeleportation_NetworkBehviour.Instance.OnModelReceived += OnModelSaved;
 
         // Get model status
         GetModelStatus();
     }
 
-    private void Update()
-    {
-        if (VRTeleportation_NetworkBehviour.Instance.ModelReceiver != null && _listenForModelReciever)
-        {
-            VRTeleportation_NetworkBehviour.Instance.OnModelReceived += OnModelSaved;
-            VRTeleportation_NetworkBehviour.Instance.ModelReceiver.OnModelReceivedError += OnModelSavedError;
+    //private void Update()
+    //{
+    //    if (VRTeleportation_NetworkBehviour.Instance.ModelReceiver != null && _listenForModelReciever)
+    //    {
+    //        VRTeleportation_NetworkBehviour.Instance.OnModelReceived += OnModelSaved;
+    //        VRTeleportation_NetworkBehviour.Instance.ModelReceiver.OnModelReceivedError += OnModelSavedError;
 
-            float x = VRTeleportation_NetworkBehviour.Instance.ModelReceiver.FullModelOffset;
-            float y = VRTeleportation_NetworkBehviour.Instance.ModelReceiver.FullModelLenght;
-            float value = x / y;
+    //        float x = VRTeleportation_NetworkBehviour.Instance.ModelReceiver.FullModelOffset;
+    //        float y = VRTeleportation_NetworkBehviour.Instance.ModelReceiver.FullModelLenght;
+    //        float value = x / y;
 
-            if (value > 0)
-                modelDownloadingImage.fillAmount = value;
-        } 
-    }
+    //        if (value > 0)
+    //            modelDownloadingImage.fillAmount = value;
+    //    } 
+    //}
 
     private void GetModelStatus()
     {
@@ -117,7 +130,7 @@ public class ModelListItem : MonoBehaviour
         };
 
         _listenForModelReciever = true;
-        VRTeleportation_NetworkBehviour.Instance.GetModel(Name);
+        VRTeleportation_NetworkBehviour.Instance.GetModel(_info.ID);
     }
 
     private IEnumerator WriteFileAndNotify(byte[] _data)
@@ -134,7 +147,6 @@ public class ModelListItem : MonoBehaviour
         _listenForModelReciever = false;
 
         VRTeleportation_NetworkBehviour.Instance.OnModelReceived -= OnModelSaved;
-        VRTeleportation_NetworkBehviour.Instance.ModelReceiver.OnModelReceivedError -= OnModelSavedError;
     }
 
     private void OnModelSavedError()
@@ -143,7 +155,6 @@ public class ModelListItem : MonoBehaviour
         _listenForModelReciever = false;
 
         VRTeleportation_NetworkBehviour.Instance.OnModelReceived -= OnModelSaved;
-        VRTeleportation_NetworkBehviour.Instance.ModelReceiver.OnModelReceivedError -= OnModelSavedError;
     }
 
     private void DeleteModel()
@@ -171,13 +182,20 @@ public class ModelListItem : MonoBehaviour
             if (AppManager.Instance.LoadedModel != null)
                 Destroy(AppManager.Instance.LoadedModel);
 
+            //var parent = new GameObject("Restored model");
+
+            //GLTFast.GltfImport importer = new GLTFast.GltfImport();
+            //await importer.LoadGltfBinary(d);
+            //await importer.InstantiateMainSceneAsync(parent.transform);
+
+
             AppManager.Instance.LoadedModel = serializer.Deserialize(d, 0);
         };
 
-        VRTeleportation_NetworkBehviour.Instance.GetModel(Name);
+        VRTeleportation_NetworkBehviour.Instance.GetModel(_info.ID);
     }
 
-    private void GetSavedModel()
+    private async void GetSavedModel()
     {
         var serializer = new VRTeleportation_VRModelSerializer();
         serializer.MaterialForDeserialize = AppManager.Instance.DeserializeMaterial;
@@ -187,6 +205,16 @@ public class ModelListItem : MonoBehaviour
 
         var d = File.ReadAllBytes(_path);
 
-        AppManager.Instance.LoadedModel = serializer.Deserialize(d, 0);
+        //var parent = new GameObject("Restored model");
+
+        //GLTFast.GltfImport importer = new GLTFast.GltfImport();
+        //ImportSettings i = new ImportSettings();
+
+        //await importer.LoadGltfBinary(d);
+        //await importer.InstantiateMainSceneAsync(parent.transform);
+
+        AppManager.Instance.LoadedModel =  serializer.Deserialize(d, 0);
     }
+
+
 }

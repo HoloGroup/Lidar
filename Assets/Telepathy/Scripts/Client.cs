@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Net.Sockets;
 using System.Threading;
 
@@ -117,7 +118,7 @@ namespace Telepathy
         public int ReceivePipeCount => state != null ? state.receivePipe.TotalCount : 0;
 
         // constructor
-        public Client(int MaxMessageSize) : base(MaxMessageSize) {}
+        public Client(int MaxMessageSize) : base(MaxMessageSize) { }
 
         // the thread function
         // STATIC to avoid sharing state!
@@ -128,6 +129,7 @@ namespace Telepathy
 
         {
             Thread sendThread = null;
+
 
             // absolutely must wrap with try/catch, otherwise thread
             // exceptions are silent
@@ -148,6 +150,7 @@ namespace Telepathy
                 sendThread = new Thread(() => { ThreadFunctions.SendLoop(0, state.client, state.sendPipe, state.sendPending); });
                 sendThread.IsBackground = true;
                 sendThread.Start();
+
 
                 // run the receive loop
                 // (receive pipe is shared across all loops)
@@ -189,7 +192,6 @@ namespace Telepathy
             // actually sending data while the connection is
             // closed.
             sendThread?.Interrupt();
-
             // Connect might have failed. thread might have been closed.
             // let's reset connecting state no matter what.
             state.Connecting = false;
@@ -240,7 +242,8 @@ namespace Telepathy
             //    too long, which is especially good in games
             // -> this way we don't async client.BeginConnect, which seems to
             //    fail sometimes if we connect too many clients too fast
-            state.receiveThread = new Thread(() => {
+            state.receiveThread = new Thread(() =>
+            {
                 ReceiveThreadFunction(state, ip, port, MaxMessageSize, NoDelay, SendTimeout, ReceiveTimeout, ReceiveQueueLimit, onMainReceivePipeCleared);
             });
             state.receiveThread.IsBackground = true;
@@ -267,43 +270,54 @@ namespace Telepathy
         {
             if (Connected)
             {
-                // respect max message size to avoid allocation attacks.
-                if (message.Count <= MaxMessageSize)
-                {
-                    // check send pipe limit
-                    if (state.sendPipe.Count < SendQueueLimit)
-                    {
-                        // add to thread safe send pipe and return immediately.
-                        // calling Send here would be blocking (sometimes for long
-                        // times if other side lags or wire was disconnected)
-                        state.sendPipe.Enqueue(message);
-                        state.sendPending.Set(); // interrupt SendThread WaitOne()
-                        return true;
-                    }
-                    // disconnect if send queue gets too big.
-                    // -> avoids ever growing queue memory if network is slower
-                    //    than input
-                    // -> avoids ever growing latency as well
-                    //
-                    // note: while SendThread always grabs the WHOLE send queue
-                    //       immediately, it's still possible that the sending
-                    //       blocks for so long that the send queue just gets
-                    //       way too big. have a limit - better safe than sorry.
-                    else
-                    {
-                        // log the reason
-                        Log.Warning($"Client.Send: sendPipe reached limit of {SendQueueLimit}. This can happen if we call send faster than the network can process messages. Disconnecting to avoid ever growing memory & latency.");
-
-                        // just close it. send thread will take care of the rest.
-                        state.client.Close();
-                        return false;
-                    }
-                }
-                Log.Error("Client.Send: message too big: " + message.Count + ". Limit: " + MaxMessageSize);
-                return false;
+                return TrySend(message);
             }
             Log.Warning("Client.Send: not connected!");
             return false;
+
+
+
+            bool TrySend(ArraySegment<byte> message)
+            {
+                if (message.Count > 200 * 1024 * 1024)
+                {
+                    Log.Warning($"Client.Send.TrySend: Message is too big. Size ={message.Count}. Limit = 200 mb");
+                    return false;
+                }
+                else if (message.Count > MaxMessageSize)
+                {
+                    Log.Warning($"Client.Send.TrySend: Message size ({message.Count}) more MaxMessageSize ({MaxMessageSize}). Message will be send as BigMessage");
+                }
+
+                // check send pipe limit
+                if (state.sendPipe.Count < SendQueueLimit)
+                {
+                    // add to thread safe send pipe and return immediately.
+                    // calling Send here would be blocking (sometimes for long
+                    // times if other side lags or wire was disconnected)
+                    state.sendPipe.Enqueue(message);
+                    state.sendPending.Set(); // interrupt SendThread WaitOne()
+                    return true;
+                }
+                // disconnect if send queue gets too big.
+                // -> avoids ever growing queue memory if network is slower
+                //    than input
+                // -> avoids ever growing latency as well
+                //
+                // note: while SendThread always grabs the WHOLE send queue
+                //       immediately, it's still possible that the sending
+                //       blocks for so long that the send queue just gets
+                //       way too big. have a limit - better safe than sorry.
+                else
+                {
+                    // log the reason
+                    Log.Warning($"Client.Send: sendPipe reached limit of {SendQueueLimit}. This can happen if we call send faster than the network can process messages. Disconnecting to avoid ever growing memory & latency.");
+
+                    // just close it. send thread will take care of the rest.
+                    state.client.Close();
+                    return false;
+                }
+            }
         }
 
         // tick: processes up to 'limit' messages
@@ -336,7 +350,7 @@ namespace Telepathy
 
                 // peek first. allows us to process the first queued entry while
                 // still keeping the pooled byte[] alive by not removing anything.
-                if (state.receivePipe.TryPeek(out int _, out EventType eventType, out ArraySegment<byte> message))
+                if (state.receivePipe.TryPeek(out int _, out EventType eventType, out ArraySegment<byte> message, out bool bigMessage))
                 {
                     try
                     {
@@ -353,7 +367,7 @@ namespace Telepathy
                                 break;
                         }
                     }
-                    catch(Exception e)
+                    catch (Exception e)
                     {
                         UnityEngine.Debug.LogException(e);
                     }
@@ -361,7 +375,7 @@ namespace Telepathy
                     {
                         // IMPORTANT: now dequeue and return it to pool AFTER we are
                         //            done processing the event.
-                        state.receivePipe.TryDequeue();
+                        state.receivePipe.TryDequeue(bigMessage);
                     }
                 }
                 // no more messages. stop the loop.
@@ -390,7 +404,7 @@ namespace Telepathy
 
                 // peek first. allows us to process the first queued entry while
                 // still keeping the pooled byte[] alive by not removing anything.
-                if (state.receivePipeViewMessages.TryPeek(out int _, out EventType eventType, out ArraySegment<byte> message))
+                if (state.receivePipeViewMessages.TryPeek(out int _, out EventType eventType, out ArraySegment<byte> message, out bool bigMessage))
                 {
                     try
                     {
@@ -404,7 +418,7 @@ namespace Telepathy
                     {
                         // IMPORTANT: now dequeue and return it to pool AFTER we are
                         //            done processing the event.
-                        state.receivePipeViewMessages.TryDequeue();
+                        state.receivePipeViewMessages.TryDequeue(bigMessage);
                     }
 
                 }
@@ -415,5 +429,6 @@ namespace Telepathy
             // return what's left to process for next time
             return state.receivePipeViewMessages.TotalCount;
         }
+
     }
 }

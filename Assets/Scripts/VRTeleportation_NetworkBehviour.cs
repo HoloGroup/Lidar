@@ -1,4 +1,5 @@
 using kcp2k;
+using Newtonsoft.Json;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -12,11 +13,8 @@ public class VRTeleportation_NetworkBehviour : MonoBehaviour
     public static VRTeleportation_NetworkBehviour Instance;
 
     public Action<byte[]> OnModelReceived;
-    public Action<List<string>> OnModelListReceived;
+    public Action<List<ModelInfo>> OnModelListReceived;
 
-    public Action OnIncomingCall;
-    public Action<bool> OnConnectedToCall;
-    public Action<int, int, byte[]> OnAudioFrameReceived;
 
     [SerializeField] private int _networkPortTCP;
     [SerializeField] private int _operationsPerUpdateCount = 1000;
@@ -27,12 +25,10 @@ public class VRTeleportation_NetworkBehviour : MonoBehaviour
     private float _tcpKeepAliveNextTime;
     private float _tcpKeepAliveDelaySec = 30;
 
-    private KcpClient _clientUDP;
-    private int _udpId = 0;
 
-    private string _networkName;
 
-    public ModelReceiver ModelReceiver { get; private set; }
+    private UserInfo _userInfo;
+
 
     public bool IsConnected { get { return _clientTCP.Connected; } }
 
@@ -43,31 +39,27 @@ public class VRTeleportation_NetworkBehviour : MonoBehaviour
         else
             DestroyImmediate(gameObject);
 
-        _clientTCP = new Client(100000);
+        _clientTCP = new Client(1024);
         _clientTCP.ReceiveTimeout = 1000 * 60; // 1 minute
 
 
-        _clientTCP.OnConnected = () => OnConnectedToServer();
+        _clientTCP.OnConnected = () => OnConnected();
         _clientTCP.OnData = (message) => OnDataReceived(message);
         _clientTCP.OnDisconnected = () => OnDisconnected();
 
-        var config = new KcpConfig() { DualMode = false, NoDelay = true };
-        _clientUDP = new KcpClient(OnConnectedUDP, OnDataUDP, OnDisconnectedUDP, OnErrorUDP, config);
 
-        _networkName = $"User{UnityEngine.Random.Range(1, 9999999)}";
+        _userInfo = new UserInfo();
     }
 
     private async void Start()
     {
         await Connect();
-        SendGetModelList();
     }
 
     private void Update()
     {
         _clientTCP.Tick(_operationsPerUpdateCount);
 
-        _clientUDP.Tick();
 
         if (_clientTCP.Connected)
         {
@@ -82,7 +74,6 @@ public class VRTeleportation_NetworkBehviour : MonoBehaviour
 
     private void OnApplicationQuit()
     {
-        _clientUDP.Disconnect();
         _clientTCP.Disconnect();
     }
 
@@ -107,7 +98,7 @@ public class VRTeleportation_NetworkBehviour : MonoBehaviour
 
     private void SendKeepAlive()
     {
-        SendNetworkMessage(BitConverter.GetBytes((int)MessageType.KEEP_ALIVE));
+        SendNetworkMessage(new byte[] { (byte)MessageType.KEEP_ALIVE });
     }
 
     public void SendNetworkMessage(byte[] data)
@@ -128,64 +119,24 @@ public class VRTeleportation_NetworkBehviour : MonoBehaviour
             _clientTCP.Disconnect();
     }
 
-    public async Task SendModel(byte[] modelData, string name, Action<float> onPercentChange)
+
+    private void OnConnected()
     {
-        Debug.Log("Connected");
-        await Task.Delay(500);
 
-        var helloMessage = new List<byte>();
-        helloMessage.AddRange(BitConverter.GetBytes((int)MessageType.HELLO));
-        helloMessage.AddRange(BitConverter.GetBytes(true));
+        var handshake = new List<byte>();
 
-        SendNetworkMessage(helloMessage.ToArray());
+        handshake.Add((byte)MessageType.Handshake);
 
-        await Task.Delay(500);
 
-        var infoMessage = new List<byte>();
-        infoMessage.AddRange(BitConverter.GetBytes((int)MessageType.ModelFromPhone));
-        infoMessage.AddRange(BitConverter.GetBytes(0)); // model info
+        var infoBytes = System.Text.Encoding.UTF8.GetBytes(JsonUtility.ToJson(_userInfo));
+        handshake.AddRange(infoBytes);
 
-        var namaArray = System.Text.Encoding.UTF8.GetBytes(name);
-        infoMessage.AddRange(BitConverter.GetBytes(namaArray.Length));
-        infoMessage.AddRange(namaArray);
+        SendNetworkMessage(handshake.ToArray());
 
-        infoMessage.AddRange(BitConverter.GetBytes(modelData.Length));
-        SendNetworkMessage(infoMessage.ToArray());
+        _tcpKeepAliveNextTime = Time.time;
 
-        await Task.Delay(500);
 
-        int sendedBytes = 0;
-
-        do
-        {
-            if (!IsConnected)
-            {
-                Debug.Log("Disconnected while transfering");
-                break;
-            }
-
-            var chunckMsg = new List<byte>();
-            chunckMsg.AddRange(BitConverter.GetBytes((int)MessageType.ModelFromPhone));
-            chunckMsg.AddRange(BitConverter.GetBytes(1)); // model data
-
-            var chunckLenght = (modelData.Length - sendedBytes < 90000) ? modelData.Length - sendedBytes : 90000;
-            chunckMsg.AddRange(BitConverter.GetBytes(chunckLenght));
-            chunckMsg.AddRange(new ArraySegment<byte>(modelData, sendedBytes, chunckLenght));
-
-            SendNetworkMessage(chunckMsg.ToArray());
-            sendedBytes += chunckLenght;
-            Debug.Log($"Sended: {sendedBytes}/{modelData.Length}");
-            onPercentChange?.Invoke(((float)sendedBytes / (float)modelData.Length) * 100);
-            await Task.Delay(500);
-        }
-        while (sendedBytes < modelData.Length);
-
-        Debug.Log("Sended ALL");
-
-    }
-
-    private void OnConnectedToServer()
-    {
+        SendGetModelList();
     }
 
     private async void OnDisconnected()
@@ -199,36 +150,30 @@ public class VRTeleportation_NetworkBehviour : MonoBehaviour
         Buffer.BlockCopy(bufferSegment.Array, 0, arrayData, 0, arrayData.Length);
 
         int offset = 0;
-        var messageType = (MessageType)BitConverter.ToInt32(arrayData, offset);
-        offset += 4;
+        var messageType = (MessageType)arrayData[offset];
+        offset += 1;
         Debug.Log($"msg: {messageType}");
         switch (messageType)
         {
             case MessageType.KEEP_ALIVE:
                 break;
-            case MessageType.GotModelsListFromServer:
+            case MessageType.Handshake:
+                break;
+            case MessageType.ModelsList:
                 HandleModelList(arrayData, offset);
                 break;
-            case MessageType.GotModelFromServer:
-                if (ModelReceiver == null)
-                    ModelReceiver = new ModelReceiver();
+            case MessageType.ModelData:
+                var lenght = BitConverter.ToInt32(arrayData, offset);
+                offset += 4;
+                var infoAsString = System.Text.Encoding.UTF8.GetString(arrayData, offset, lenght);
+                offset += lenght;
+                var info = JsonUtility.FromJson<ModelInfo>(infoAsString);
 
-                if(ModelReceiver.HandleMessage(arrayData, offset))
-                {
-                    if(ModelReceiver.IsReceiveCompleted)
-                    {
-                        OnModelReceived?.Invoke(ModelReceiver.FullModelData);
-                        ModelReceiver = null;
-                    }
-                }
-                break;
-            case MessageType.ConnectedToCall:
-                HandleConnectedToCall(arrayData, offset);
-                break;
-            case MessageType.CallRoomListUpdate:
-                HandleIncomingCall();
-                break;
+                var modelBytes = new byte[arrayData.Length - offset];
+                Buffer.BlockCopy(arrayData, offset, modelBytes, 0, modelBytes.Length);
 
+                OnModelReceived?.Invoke(modelBytes);
+                break;
             default:
                 throw new Exception($"Unhandled message type: {messageType}");
         }
@@ -237,61 +182,22 @@ public class VRTeleportation_NetworkBehviour : MonoBehaviour
 
     private void HandleModelList(byte[] data, int offset)
     {
-        var count = BitConverter.ToInt32(data, offset);
-        offset += 4;
+        var listAsString = System.Text.Encoding.UTF8.GetString(data, offset, data.Length - 1);
+        var list = JsonConvert.DeserializeObject<ModelInfoList>(listAsString);
 
-        List<string> names = new List<string>();
 
-        for (int i = 0; i < count; ++i)
-        {
-            var nameLenght = BitConverter.ToInt32(data, offset);
-            offset += 4;
-
-            var nameData = new byte[nameLenght];
-            Buffer.BlockCopy(data, offset, nameData, 0, nameLenght);
-            offset += nameLenght;
-
-            var name = System.Text.Encoding.UTF8.GetString(nameData);
-            names.Add(name);
-
-            Debug.Log(name);
-        }
-
-        OnModelListReceived?.Invoke(names);
+        OnModelListReceived?.Invoke(list.Models);
     }
 
-    private void HandleConnectedToCall(byte[] data, int offset)
-    {
-        OnConnectedToCall?.Invoke(true);
-    }
 
-    private void HandleIncomingCall()
-    {
-        OnIncomingCall?.Invoke();
-    }
 
     [ContextMenu("GetModelList")]
-    public async void SendGetModelList()
+    public void SendGetModelList()
     {
-        var helloMessage = new List<byte>();
-        helloMessage.AddRange(BitConverter.GetBytes((int)MessageType.HELLO));
-        helloMessage.AddRange(BitConverter.GetBytes(true));
-        var nameBytes = System.Text.Encoding.UTF8.GetBytes(_networkName);
-        helloMessage.AddRange(BitConverter.GetBytes(nameBytes.Length));
-        helloMessage.AddRange(nameBytes);
-
-
-        SendNetworkMessage(helloMessage.ToArray());
-
-        await Task.Delay(500);
-
         var buffer = new List<byte>();
-        buffer.AddRange(BitConverter.GetBytes((int)MessageType.GetModelsListFromVR));
+        buffer.Add((byte)MessageType.GetModelsList);
 
         SendNetworkMessage(buffer.ToArray());
-        /*List<string> list = new List<string>();
-        list.Add("Test room");
-        OnModelListReceived?.Invoke(list);*/
     }
 
     [ContextMenu("GetModel")]
@@ -299,243 +205,78 @@ public class VRTeleportation_NetworkBehviour : MonoBehaviour
     {
         var buffer = new List<byte>();
 
-        buffer.AddRange(BitConverter.GetBytes((int)MessageType.GetModelFromVR));
+        buffer.Add((byte)MessageType.GetModel);
 
         var nameData = System.Text.Encoding.UTF8.GetBytes(name);
         buffer.AddRange(BitConverter.GetBytes(nameData.Length));
         buffer.AddRange(nameData);
 
         SendNetworkMessage(buffer.ToArray());
-
-        /*var file = File.ReadAllBytes("C:\\Users\\Makc\\Desktop\\model.bin");
-        Debug.Log(file.Length);
-        await Task.Delay(1000);
-        OnModelReceived?.Invoke(file);*/
     }
 
-    #region UDP_CALLBACKS
-    private void SendNetworkMessageUDP(byte[] data, KcpChannel channel)
-    {
-        try
-        {
-            _clientUDP.Send(new ArraySegment<byte>(data), channel);
-        }
-        catch (Exception e)
-        {
-            Debug.LogError("HANDLE EXCEPTION UDP:");
-            Debug.LogException(e);
-        }
-    }
 
-    private void OnConnectedUDP()
-    {
-        Debug.Log($"UDP connect");
-    }
-
-    private void OnDataUDP(ArraySegment<byte> data, KcpChannel channel)
-    {
-        var arrayData = new byte[data.Count];
-        Buffer.BlockCopy(data.Array, data.Offset, arrayData, 0, data.Count);
-
-
-        int offset = 0;
-        var messageType = (MessageTypeUDP)BitConverter.ToInt32(arrayData, offset);
-        offset += 4;
-
-        switch (messageType)
-        {
-            case MessageTypeUDP.HELLO:
-                _udpId = BitConverter.ToInt32(arrayData, offset);
-                break;
-            case MessageTypeUDP.CALL_FRAME:
-                var chunkNumber = BitConverter.ToInt32(arrayData, offset);
-                offset += 4;
-                var channels = BitConverter.ToInt32(arrayData, offset);
-                offset += 4;
-
-                var frameData = new byte[arrayData.Length - offset];
-                Buffer.BlockCopy(arrayData, offset, frameData, 0, frameData.Length);
-                OnAudioFrameReceived?.Invoke(chunkNumber, channels, frameData);
-                break;
-            default:
-                throw new Exception($"Unhandled message type: {messageType}");
-        }
-    }
-
-    private void OnDisconnectedUDP()
-    {
-        Debug.Log($"UDP disconnected");
-        OnConnectedToCall?.Invoke(false);
-    }
-
-    private void OnErrorUDP(ErrorCode error, string message)
-    {
-        Debug.LogError($"UDP error:  {error.ToString()}\n {message}");
-
-    }
-    #endregion
-
-    public async void InitCall()
-    {
-        FindObjectOfType<VRTeleportation_Caller>().connectingCallUi.SetActive(true);
-
-        _clientUDP.Connect(_applicationServerIp, (ushort)(_networkPortTCP + 1));
-
-        while (_udpId == 0)
-        {
-            await Task.Delay(100);
-        }
-
-        SendInitCall();
-    }
-
-    public async void ConnectToCall()
-    {
-        FindObjectOfType<VRTeleportation_Caller>().connectingCallUi.SetActive(true);
-
-        _clientUDP.Connect(_applicationServerIp, (ushort)(_networkPortTCP + 1));
-
-        while (_udpId == 0)
-        {
-            await Task.Delay(100);
-        }
-
-        SendConnectToCall();
-    }
-
-    public async void EndCall()
-    {
-        OnConnectedToCall?.Invoke(false);
-    }
-
-    private void SendInitCall()
-    {
-        var buffer = new List<byte>();
-        buffer.AddRange(BitConverter.GetBytes((int)MessageType.InitCall));
-        buffer.AddRange(BitConverter.GetBytes(_udpId));
-
-
-        SendNetworkMessage(buffer.ToArray());
-    }
-
-    private void SendConnectToCall()
-    {
-        var buffer = new List<byte>();
-        buffer.AddRange(BitConverter.GetBytes((int)MessageType.ConnectToCall));
-        buffer.AddRange(BitConverter.GetBytes(_udpId));
-
-        SendNetworkMessage(buffer.ToArray());
-    }
-
-    public void SendCallFrame(byte[] data, int channels, int chunkNumber)
-    {
-        var buffer = new List<byte>();
-        buffer.AddRange(BitConverter.GetBytes((int)MessageTypeUDP.CALL_FRAME));
-        buffer.AddRange(BitConverter.GetBytes(chunkNumber));
-        buffer.AddRange(BitConverter.GetBytes(channels));
-        buffer.AddRange(data);
-
-        SendNetworkMessageUDP(buffer.ToArray(), KcpChannel.Reliable);
-    }
 }
 
-public enum MessageType
+public enum MessageType : byte
 {
-    KEEP_ALIVE = 255,
+    KEEP_ALIVE = 250,
 
-    HELLO = 0,
-    ModelFromPhone = 2,
-    GetModelsListFromVR = 3,
-    GetModelFromVR = 4,
+    Handshake = 0,
 
-    SendMaodelsListToVR = 10,
-    SendModelToVR = 11,
+    ModelData = 2,
+    GetModelsList = 3,
+    ModelsList = 4,
+    ServerGotModel = 5,
+    GetModel = 6
 
-    GotModelsListFromServer = 20,
-    GotModelFromServer = 21,
-
-    InitCall = 50,
-    ConnectToCall = 51,
-    ConnectedToCall = 52,
-    CallRoomListUpdate = 53
 }
 
-public enum MessageTypeUDP
+public class UserInfo
 {
-    HELLO = 0,
-    CALL_FRAME = 1
+    public string Name;
+    public string DeviceInfo;
+
+    public UserInfo()
+    {
+        Name = $"User_{UnityEngine.Random.Range(1, 9999999)}";
+        DeviceInfo = $"{Environment.OSVersion} || {Environment.MachineName}";
+    }
 }
 
-public class ModelReceiver
+public class ModelInfo
 {
-    private enum ModelMessageType
+    public string ID;
+    public string Name;
+    public string CreationDate;
+    public string LocalPath;
+
+    private ModelInfo() { }
+
+    public ModelInfo(string name)
     {
-        ModelInfo = 0,
-        ModelDataPart = 1
-    }
+        Name = name;
+        CreationDate = DateTime.Now.ToUniversalTime().ToString();
 
-    public string ModelName;
-    public byte[] FullModelData;
+        var idString = $"{Name}{CreationDate}{UnityEngine.Random.Range(0.0001f, 9999.999f)}";
+        var idStringAsBytes = System.Text.Encoding.UTF8.GetBytes(idString);
+        var encoder = System.Security.Cryptography.MD5.Create();
+        var idBytes = encoder.ComputeHash(idStringAsBytes);
 
-    public Action OnModelReceivedError;
-
-    public bool IsReceiveCompleted { get; private set; } = false;
-
-    public int FullModelLenght { get; private set; }
-    public int FullModelOffset { get; private set; } = 0;
-    public bool HandleMessage(byte[] data, int offset)
-    {
-        var msgType = (ModelMessageType)BitConverter.ToInt32(data, offset);
-        offset += 4;
-
-        switch (msgType)
-        {
-            case ModelMessageType.ModelInfo:
-                HandleInfo(data, offset);
-                break;
-            case ModelMessageType.ModelDataPart:
-                HandleData(data, offset);
-                break;
-            default:
-                OnModelReceivedError?.Invoke();
-                break;
-        }
-
-        return true;
-    }
-
-    private void HandleInfo(byte[] data, int offset)
-    {
-        //int nameLenght = BitConverter.ToInt32(data, offset);
-        //offset += 4;
-
-        //var nameArray = new byte[nameLenght];
-        //Buffer.BlockCopy(data, offset, nameArray, 0, nameLenght);
-        //offset += nameLenght;
-
-        //var name = System.Text.Encoding.UTF8.GetString(nameArray);
-        var modelLenght = BitConverter.ToInt32(data, offset);
-
-
-        //ModelName = name;
-        FullModelLenght = modelLenght;
-
-        FullModelData = new byte[FullModelLenght];
-
-        Debug.Log($"Start receive model: . Lenght: {FullModelLenght}");
-    }
-
-    private void HandleData(byte[] data, int offset)
-    {
-        var chunkLenght = BitConverter.ToInt32(data, offset);
-        offset += 4;
-
-        Buffer.BlockCopy(data, offset, FullModelData, FullModelOffset, chunkLenght);
-        FullModelOffset += chunkLenght;
-
-        if (FullModelData.Length == FullModelOffset)
-            IsReceiveCompleted = true;
-
-        Debug.Log($"Receiving model: . {FullModelOffset}/{FullModelLenght}");
+        ID = Convert.ToBase64String(idBytes);
     }
 }
+
+public class ModelInfoList
+{
+    public int Count;
+    public List<ModelInfo> Models = new List<ModelInfo>();
+}
+
+
+
+
+
+
+/// <summary>
+/// ////////////////////////////////////////////////////
+/// </summary>

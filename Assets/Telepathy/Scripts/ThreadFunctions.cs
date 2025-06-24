@@ -10,6 +10,7 @@
 // let's even keep them in a STATIC CLASS so it's 100% obvious that this should
 // NOT EVER be changed to non static!
 using System;
+using System.Diagnostics;
 using System.Net.Sockets;
 using System.Threading;
 
@@ -40,9 +41,10 @@ namespace Telepathy
         }
         // read message (via stream) blocking.
         // writes into byte[] and returns bytes written to avoid allocations.
-        public static bool ReadMessageBlocking(NetworkStream stream, int MaxMessageSize, byte[] headerBuffer, byte[] payloadBuffer, out int size)
+        public static bool ReadMessageBlocking(NetworkStream stream, int MaxMessageSize, byte[] headerBuffer, byte[] payloadBuffer, out int size, out byte[] payloadBufferBigMessage)
         {
             size = 0;
+            payloadBufferBigMessage = null;
 
             // buffer needs to be of Header + MaxMessageSize
             if (payloadBuffer.Length != 4 + MaxMessageSize)
@@ -63,11 +65,24 @@ namespace Telepathy
             // to allocate multiple 2GB byte arrays and run out of memory.
             //
             // also protect against size <= 0 which would cause issues
-            if (size > 0 && size <= MaxMessageSize)
+            if (size > 0)
             {
-                // read exactly 'size' bytes for content (blocking)
-                return stream.ReadExactly(payloadBuffer, size);
+                if (size <= MaxMessageSize)
+                {
+                    // read exactly 'size' bytes for content (blocking)
+                    return stream.ReadExactly(payloadBuffer, size);
+                }
+                else
+                {
+                    if (size <= 200 * 1024 * 1024) // 200mbMax
+                    {
+                        payloadBufferBigMessage = new byte[size];
+                        return stream.ReadExactly(payloadBufferBigMessage, size);
+                    }
+                }
+
             }
+
             Log.Warning("ReadMessageBlocking: possible header attack with a header of: " + size + " bytes.");
             return false;
         }
@@ -118,20 +133,27 @@ namespace Telepathy
                 while (true)
                 {
                     // read the next message (blocking) or stop if stream closed
-                    if (!ReadMessageBlocking(stream, MaxMessageSize, headerBuffer, receiveBuffer, out int size))
+                    if (!ReadMessageBlocking(stream, MaxMessageSize, headerBuffer, receiveBuffer, out int size, out byte[] receiveBufferBigMessage))
                         // break instead of return so stream close still happens!
                         break;
 
-                    // create arraysegment for the read message
-                    ArraySegment<byte> message = new ArraySegment<byte>(receiveBuffer, 0, size);
+                    if (receiveBufferBigMessage == null)
+                    {
+                        // create arraysegment for the read message
+                        ArraySegment<byte> message = new ArraySegment<byte>(receiveBuffer, 0, size);
 
-                    // send to main thread via pipe
-                    // -> it'll copy the message internally so we can reuse the
-                    //    receive buffer for next read!
+                        // send to main thread via pipe
+                        // -> it'll copy the message internally so we can reuse the
+                        //    receive buffer for next read!
 
+                        receivePipe.Enqueue(connectionId, EventType.Data, message);
 
-                    receivePipe.Enqueue(connectionId, EventType.Data, message);
-
+                    }
+                    else
+                    {
+                        ArraySegment<byte> message = new ArraySegment<byte>(receiveBufferBigMessage, 0, size);
+                        receivePipe.Enqueue(connectionId, EventType.Data, message);
+                    }
 
                     // disconnect if receive pipe gets too big for this connectionId.
                     // -> avoids ever growing queue memory if network is slower

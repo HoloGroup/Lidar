@@ -74,7 +74,7 @@ namespace Telepathy
                 }
                 else
                 {
-                    if (size <= 200 * 1024 * 1024) // 200mbMax
+                    if (size <= 1024 * 1024 * 1024) 
                     {
                         payloadBufferBigMessage = new byte[size];
                         return stream.ReadExactly(payloadBufferBigMessage, size);

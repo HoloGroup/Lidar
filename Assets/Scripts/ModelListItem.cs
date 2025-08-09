@@ -12,18 +12,22 @@ public class ModelListItem : MonoBehaviour
 {
     [SerializeField] private Button modelMainButton;
     [SerializeField] private TMP_Text modelNameText;
+    [SerializeField] private TMP_Text modelDataText;
+
     [SerializeField] private Button modelSaveButton;
     [SerializeField] private Button modelDeleteButton;
     [SerializeField] private Image modelDownloadingImage;
     [SerializeField] private TMP_Text modelStatusText;
 
-    public string Name { get { return _name; }}
+    public string Name { get { return _name; } }
     private string _name;
     private string _path;
 
     private bool _listenForModelReciever;
 
     private ModelInfo _info;
+
+    private Coroutine _downloadingAnimationRoutine;
 
     private void Start()
     {
@@ -42,6 +46,7 @@ public class ModelListItem : MonoBehaviour
     internal void Initialize(ModelInfo modelInfo)
     {
         _info = modelInfo;
+        modelDataText.text = modelInfo.CreationDate.ToString();
         Initialize(_info.Name);
     }
 
@@ -94,15 +99,21 @@ public class ModelListItem : MonoBehaviour
 
     private void OnModelMainButtonClick()
     {
-        AppManager.Instance.modelListWindow.gameObject.SetActive(false);
+        //AppManager.Instance.modelListWindow.gameObject.SetActive(false);
 
         // Open saved model or download it
         if (File.Exists(_path))
+        {
+            AppManager.Instance.modelListWindow.gameObject.SetActive(false);
+
             GetSavedModel();
+        }
         else
         {
-            AppManager.Instance.downloadingWindow.SetActive(true);
-            DownloadModel();
+            //AppManager.Instance.downloadingWindow.SetActive(true);
+            //DownloadModel();
+            AppManager.Instance.modelListWindow.EnableButtons(false);
+            SaveModel(true);
         }
     }
 
@@ -117,8 +128,10 @@ public class ModelListItem : MonoBehaviour
         DeleteModel();
     }
 
-    private void SaveModel()
+    private void SaveModel(bool autoopen = false)
     {
+        _downloadingAnimationRoutine = StartCoroutine(DownloadingAnimationProcess());
+
         VRTeleportation_NetworkBehviour.Instance.OnModelReceived += async (byte[] d) =>
         {
             Debug.Log($"Saved model {d.Length}");
@@ -127,10 +140,53 @@ public class ModelListItem : MonoBehaviour
             await new WaitForUpdate();
 
             await StartCoroutine(WriteFileAndNotify(d));
+
+            if (_downloadingAnimationRoutine != null)
+            {
+                StopCoroutine(_downloadingAnimationRoutine);
+                modelDownloadingImage.fillAmount = 0;
+            }
+
+
+            if (autoopen)
+                OnModelMainButtonClick();
         };
 
         _listenForModelReciever = true;
         VRTeleportation_NetworkBehviour.Instance.GetModel(_info.ID);
+    }
+    private IEnumerator DownloadingAnimationProcess()
+    {
+        bool clockwise = modelDownloadingImage.fillClockwise;
+        while (true)
+        {
+            if (clockwise)
+            {
+                if (modelDownloadingImage.fillAmount < 1)
+                {
+                    modelDownloadingImage.fillAmount += Time.deltaTime * 0.7f;
+                }
+                else
+                {
+                    clockwise = !clockwise;
+                    modelDownloadingImage.fillClockwise = clockwise;
+                }
+            }
+            else
+            {
+                if (modelDownloadingImage.fillAmount > 0)
+                {
+                    modelDownloadingImage.fillAmount -= Time.deltaTime * 0.7f;
+                }
+                else
+                {
+                    clockwise = !clockwise;
+                    modelDownloadingImage.fillClockwise = clockwise;
+                }
+            }
+
+            yield return null;
+        }
     }
 
     private IEnumerator WriteFileAndNotify(byte[] _data)
@@ -213,7 +269,7 @@ public class ModelListItem : MonoBehaviour
         //await importer.LoadGltfBinary(d);
         //await importer.InstantiateMainSceneAsync(parent.transform);
 
-        AppManager.Instance.LoadedModel =  serializer.Deserialize(d, 0);
+        AppManager.Instance.LoadedModel = serializer.Deserialize(d, 0);
     }
 
 

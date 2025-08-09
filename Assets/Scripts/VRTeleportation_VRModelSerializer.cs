@@ -6,6 +6,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
+using Unity.VisualScripting;
 using UnityEngine;
 public class VRTeleportation_VRModelSerializer
 {
@@ -21,8 +23,8 @@ public class VRTeleportation_VRModelSerializer
         public int[] Tris;
         public Vector3[] Normals;
         public Vector2[] UV;
+        public int TextureId;
         public byte[] Texture = new byte[0];
-        public string TextureHash = string.Empty;
 
         public Texture2D Texture2D
         {
@@ -35,7 +37,7 @@ public class VRTeleportation_VRModelSerializer
                     var tex = new Texture2D(1, 1);
                     var res = tex.LoadImage(Texture);
                     tex.Apply();
-
+                    Debug.Log($"Is readable: {tex.isReadable}");
                     return tex;
                 }
             }
@@ -53,7 +55,7 @@ public class VRTeleportation_VRModelSerializer
             data.AddRange(GetBytes(Tris));
             data.AddRange(GetBytes(Normals));
             data.AddRange(GetBytes(UV));
-
+            //data.AddRange(BitConverter.GetBytes(TextureId));
             data.AddRange(BitConverter.GetBytes(Texture.Length));
 
             if (Texture.Length > 0)
@@ -72,7 +74,8 @@ public class VRTeleportation_VRModelSerializer
             offset = GetIntArray(data, offset, out Tris);
             offset = GetVector3Array(data, offset, out Normals);
             offset = GetVector2Array(data, offset, out UV);
-
+            //TextureId = BitConverter.ToInt32(data, offset);
+            //offset += 4;
             var texLenght = BitConverter.ToInt32(data, offset);
             offset += 4;
 
@@ -272,45 +275,62 @@ public class VRTeleportation_VRModelSerializer
     }
 
 
-    public byte[] Serialize(GameObject model)
-    {
-        var allMeshFilters = model.GetComponentsInChildren<MeshFilter>();
-        List<MeshFilterData> mfDatas = new List<MeshFilterData>(allMeshFilters.Length);
+    //public async UniTask<byte[]> Serialize(GameObject model, Action<int> onProgressChanged = null)
+    //{
+    //    onProgressChanged?.Invoke(0);
 
-        foreach (var mf in allMeshFilters)
-        {
-            var mfData = new MeshFilterData();
-            var mfTransform = mf.transform;
-            mfData.LocalPosition = mfTransform.localPosition;
-            mfData.LocalRotation = mfTransform.localRotation;
-            mfData.Scale = mfTransform.localScale;
+    //    var allMeshFilters = model.GetComponentsInChildren<MeshFilter>();
+    //    List<MeshFilterData> mfDatas = new List<MeshFilterData>(allMeshFilters.Length);
+    //    var steps = allMeshFilters.Length;
+    //    var tempStep = 0;
 
-            mfData.Verts = mf.sharedMesh.vertices;
-            mfData.Tris = mf.sharedMesh.triangles;
-            mfData.Normals = mf.sharedMesh.normals;
-            mfData.UV = mf.sharedMesh.uv;
+    //    int countProcessed = 0;
+    //    foreach (var mf in allMeshFilters)
+    //    {
+    //        if (countProcessed > 50)
+    //        {
+    //            countProcessed = 0;
+    //            await UniTask.Yield();
+    //        }
 
-            var tex = mf.GetComponent<MeshRenderer>().material.GetTexture("_BaseMap");
-            if (tex != null)
-            {
-                var tex2d = (tex as Texture2D);
-                mfData.Texture = tex2d.EncodeToJPG();
-            }
+    //        var mfData = new MeshFilterData();
+    //        var mfTransform = mf.transform;
+    //        mfData.LocalPosition = mfTransform.localPosition;
+    //        mfData.LocalRotation = mfTransform.localRotation;
+    //        mfData.Scale = mfTransform.localScale;
 
-            mfDatas.Add(mfData);
-        }
+    //        mfData.Verts = mf.sharedMesh.vertices;
+    //        mfData.Tris = mf.sharedMesh.triangles;
+    //        mfData.Normals = mf.sharedMesh.normals;
+    //        mfData.UV = mf.sharedMesh.uv;
+
+    //        var tex = mf.GetComponent<MeshRenderer>().material.GetTexture("_BaseMap");
+    //        if (tex != null)
+    //        {
+    //            var tex2d = (tex as Texture2D);
+    //            mfData.Texture = tex2d.EncodeToJPG();
+    //        }
+
+    //        mfDatas.Add(mfData);
+
+    //        ++countProcessed;
+
+    //        tempStep++;
+
+    //        onProgressChanged?.Invoke((int)(tempStep * 100f) / steps);
+    //    }
 
 
-        var resultData = new List<byte>();
+    //    var resultData = new List<byte>();
 
-        resultData.AddRange(BitConverter.GetBytes(mfDatas.Count));
-        foreach (var data in mfDatas)
-        {
-            resultData.AddRange(data.Serialize());
-        }
+    //    resultData.AddRange(BitConverter.GetBytes(mfDatas.Count));
+    //    foreach (var data in mfDatas)
+    //    {
+    //        resultData.AddRange(data.Serialize());
+    //    }
 
-        return resultData.ToArray();
-    }
+    //    return resultData.ToArray();
+    //}
 
     public GameObject Deserialize(byte[] data, int offset)
     {
@@ -330,22 +350,6 @@ public class VRTeleportation_VRModelSerializer
         var parent = new GameObject("Restored model");
         var parentTransform = parent.transform;
 
-        parentTransform.position = new Vector3(parentTransform.position.x, parentTransform.position.y + 1.55f, parentTransform.position.z);
-
-        Dictionary<string, Texture2D> _textures = new Dictionary<string, Texture2D>();
-        var cryptograph = System.Security.Cryptography.MD5.Create();
-        foreach (var mfData in mfDatas)
-        {
-            var hash = cryptograph.ComputeHash(mfData.Texture);
-            var asString = Convert.ToBase64String(hash);
-            mfData.TextureHash = asString;
-
-            if (_textures.ContainsKey(asString))
-                continue;
-
-            _textures.Add(asString, mfData.Texture2D);
-        }
-
         foreach (var mfData in mfDatas)
         {
             var child = new GameObject();
@@ -357,6 +361,8 @@ public class VRTeleportation_VRModelSerializer
             var mf = child.AddComponent<MeshFilter>();
 
             var mesh = new Mesh();
+            mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+
             mesh.vertices = mfData.Verts;
             mesh.triangles = mfData.Tris;
             mesh.normals = mfData.Normals;
@@ -367,16 +373,180 @@ public class VRTeleportation_VRModelSerializer
             var mr = child.AddComponent<MeshRenderer>();
             mr.sharedMaterial = MaterialForDeserialize;
 
-            if (!string.IsNullOrEmpty(mfData.TextureHash))
-            {
-                var tex = _textures[mfData.TextureHash];
-                if (tex != null)
-                    mr.material.SetTexture("_BaseMap", tex);
-            }
+            var tex = mfData.Texture2D;
+            if (tex != null)
+                mr.material.SetTexture("_BaseMap", tex);
         }
 
         return parent;
     }
+
+    //public async Task<byte[]> Serialize(Dictionary<string, List<MeshSlicerNative.MeshPart>> slisedMeshes, Action<int> onProgressChanged)
+    //{
+    //    onProgressChanged?.Invoke(0);
+    //    List<MeshSlicerNative.MeshPart> allMeshParts = new List<MeshSlicerNative.MeshPart>();
+    //    List<MeshSlicerNative.MeshPartTextureInfo> allTextures = new List<MeshSlicerNative.MeshPartTextureInfo>();
+
+    //    foreach (var part in slisedMeshes)
+    //    {
+    //        if (part.Value.Count > 0)
+    //            allMeshParts.AddRange(part.Value);
+    //    }
+
+    //    foreach (var part in allMeshParts)
+    //    {
+    //        if (allTextures.Contains(part.TextureInfo))
+    //            continue;
+
+    //        allTextures.Add(part.TextureInfo);
+    //    }
+
+
+    //    Debug.Log($"Mesh count: {allMeshParts.Count}, texture count {allTextures.Count}");
+    //    List<byte> resultData = new List<byte>();
+    //    List<MeshFilterData> mfDatas = new List<MeshFilterData>(allMeshParts.Count);
+
+
+    //    var steps = allMeshParts.Count + allTextures.Count;
+    //    var tempStep = 0;
+    //    int countProcessed = 0;
+
+    //    resultData.AddRange(BitConverter.GetBytes(allTextures.Count));
+
+    //    foreach (var textureInfo in allTextures)
+    //    {
+    //        if (countProcessed > 10)
+    //        {
+    //            countProcessed = 0;
+    //            await UniTask.Yield();
+    //        }
+
+    //        var textureBytes = textureInfo.Texture.EncodeToJPG();
+
+    //        resultData.AddRange(BitConverter.GetBytes(textureInfo.Id));
+    //        resultData.AddRange(BitConverter.GetBytes(textureBytes.Length));
+    //        resultData.AddRange(textureBytes);
+
+
+
+    //        ++countProcessed;
+    //        tempStep++;
+    //        onProgressChanged?.Invoke((int)(tempStep * 100f) / steps);
+    //    }
+
+
+    //    foreach (var meshPart in allMeshParts)
+    //    {
+    //        if (countProcessed > 50)
+    //        {
+    //            countProcessed = 0;
+    //            await UniTask.Yield();
+    //        }
+
+    //        var mf = meshPart.Filter;
+
+    //        var mfData = new MeshFilterData();
+    //        var mfTransform = mf.transform;
+    //        mfData.LocalPosition = mfTransform.localPosition;
+    //        mfData.LocalRotation = mfTransform.localRotation;
+    //        mfData.Scale = mfTransform.localScale;
+
+    //        mfData.Verts = mf.sharedMesh.vertices;
+    //        mfData.Tris = mf.sharedMesh.triangles;
+    //        mfData.Normals = mf.sharedMesh.normals;
+    //        mfData.UV = mf.sharedMesh.uv;
+    //        mfData.TextureId = meshPart.TextureInfo.Id;
+
+    //        mfDatas.Add(mfData);
+
+    //        ++countProcessed;
+
+    //        tempStep++;
+
+    //        onProgressChanged?.Invoke((int)(tempStep * 100f) / steps);
+    //    }
+
+
+
+    //    resultData.AddRange(BitConverter.GetBytes(mfDatas.Count));
+    //    foreach (var data in mfDatas)
+    //    {
+    //        resultData.AddRange(data.Serialize());
+    //    }
+
+    //    return resultData.ToArray();
+    //}
+
+    //public GameObject Deserialize(byte[] data, int offset)
+    //{
+    //    Dictionary<int, Texture2D> allTextures = new Dictionary<int, Texture2D>();
+
+    //    int texturesCount = BitConverter.ToInt32(data, offset);
+    //    offset += 4;
+
+    //    for (int i = 0; i < texturesCount; ++i)
+    //    {
+    //        int id = BitConverter.ToInt32(data, offset);
+    //        offset += 4;
+    //        int lenght = BitConverter.ToInt32(data, offset);
+    //        offset += 4;
+
+    //        var texture = new byte[lenght];
+    //        Buffer.BlockCopy(data, offset, texture, 0, lenght);
+    //        offset += lenght;
+
+    //        var tex = new Texture2D(1, 1);
+    //        tex.LoadImage(texture);
+    //        tex.Apply();
+
+    //        allTextures.Add(id, tex);
+    //    }
+
+
+    //    int meshCount = BitConverter.ToInt32(data, offset);
+    //    offset += 4;
+
+    //    List<MeshFilterData> mfDatas = new List<MeshFilterData>(meshCount);
+
+    //    for (int i = 0; i < meshCount; ++i)
+    //    {
+    //        var mfData = new MeshFilterData();
+    //        offset = mfData.Deserialize(data, offset);
+
+    //        mfDatas.Add(mfData);
+    //    }
+
+    //    var parent = new GameObject("Restored model");
+    //    var parentTransform = parent.transform;
+
+    //    foreach (var mfData in mfDatas)
+    //    {
+    //        var child = new GameObject();
+    //        child.transform.parent = parentTransform;
+    //        child.transform.localPosition = mfData.LocalPosition;
+    //        child.transform.localRotation = mfData.LocalRotation;
+    //        child.transform.localScale = mfData.Scale;
+
+    //        var mf = child.AddComponent<MeshFilter>();
+
+    //        var mesh = new Mesh();
+    //        mesh.vertices = mfData.Verts;
+    //        mesh.triangles = mfData.Tris;
+    //        mesh.normals = mfData.Normals;
+    //        mesh.uv = mfData.UV;
+
+    //        mf.sharedMesh = mesh;
+
+    //        var mr = child.AddComponent<MeshRenderer>();
+    //        mr.sharedMaterial = MaterialForDeserialize;
+
+    //        var tex = allTextures[mfData.TextureId];
+    //        if (tex != null)
+    //            mr.material.SetTexture("_BaseMap", tex);
+    //    }
+
+    //    return parent;
+    //}
 }
 
 public class CustomMaterialGenerator : IMaterialGenerator

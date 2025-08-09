@@ -279,9 +279,9 @@ namespace Telepathy
 
             bool TrySend(ArraySegment<byte> message)
             {
-                if (message.Count > 200 * 1024 * 1024)
+                if (message.Count > 1024 * 1024 * 1024)
                 {
-                    Log.Warning($"Client.Send.TrySend: Message is too big. Size ={message.Count}. Limit = 200 mb");
+                    Log.Warning($"Client.Send.TrySend: Message is too big. Size ={message.Count}. Limit = 1024 mb");
                     return false;
                 }
                 else if (message.Count > MaxMessageSize)

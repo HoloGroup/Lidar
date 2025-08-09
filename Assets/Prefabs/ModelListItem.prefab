@@ -1192,7 +1192,7 @@ MonoBehaviour:
   m_FillCenter: 1
   m_FillMethod: 4
   m_FillAmount: 0
-  m_FillClockwise: 1
+  m_FillClockwise: 0
   m_FillOrigin: 2
   m_UseSpriteMesh: 0
   m_PixelsPerUnitMultiplier: 1
@@ -1228,7 +1228,7 @@ RectTransform:
   m_Children:
   - {fileID: 2950183797173908819}
   m_Father: {fileID: 0}
-  m_RootOrder: 0
+  m_RootOrder: -1
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 0, y: 0}
@@ -1269,6 +1269,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   modelMainButton: {fileID: 9181296337412685957}
   modelNameText: {fileID: 2854687191747966452}
+  modelDataText: {fileID: 6668888216053162693}
   modelSaveButton: {fileID: 5070875857859352729}
   modelDeleteButton: {fileID: 229993598971980391}
   modelDownloadingImage: {fileID: 7421080629291832503}

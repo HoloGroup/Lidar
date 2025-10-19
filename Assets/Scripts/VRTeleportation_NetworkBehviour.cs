@@ -249,7 +249,7 @@ public class ModelInfo
     public string Name;
     public string CreationDate;
     public string LocalPath;
-
+    public bool IsRealGLB;
     private ModelInfo() { }
 
     public ModelInfo(string name)

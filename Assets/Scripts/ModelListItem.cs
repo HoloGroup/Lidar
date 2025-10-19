@@ -1,11 +1,13 @@
-using GLTFast;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using TMPro;
+using TriLibCore;
 using UnityEngine;
+using UnityEngine.Networking;
 using UnityEngine.UI;
 
 public class ModelListItem : MonoBehaviour
@@ -223,33 +225,7 @@ public class ModelListItem : MonoBehaviour
         GetModelStatus();
     }
 
-    private void DownloadModel()
-    {
-        VRTeleportation_NetworkBehviour.Instance.OnModelReceived += async (byte[] d) =>
-        {
-            Debug.Log($"Received model {d.Length}");
-            VRTeleportation_NetworkBehviour.Instance.OnModelReceived = null;
 
-            await new WaitForUpdate();
-
-            var serializer = new VRTeleportation_VRModelSerializer();
-            serializer.MaterialForDeserialize = AppManager.Instance.DeserializeMaterial;
-
-            if (AppManager.Instance.LoadedModel != null)
-                Destroy(AppManager.Instance.LoadedModel);
-
-            //var parent = new GameObject("Restored model");
-
-            //GLTFast.GltfImport importer = new GLTFast.GltfImport();
-            //await importer.LoadGltfBinary(d);
-            //await importer.InstantiateMainSceneAsync(parent.transform);
-
-
-            AppManager.Instance.LoadedModel = serializer.Deserialize(d, 0);
-        };
-
-        VRTeleportation_NetworkBehviour.Instance.GetModel(_info.ID);
-    }
 
     private async void GetSavedModel()
     {
@@ -259,17 +235,49 @@ public class ModelListItem : MonoBehaviour
         if (AppManager.Instance.LoadedModel != null)
             Destroy(AppManager.Instance.LoadedModel);
 
-        var d = File.ReadAllBytes(_path);
 
-        //var parent = new GameObject("Restored model");
+        if(_info.IsRealGLB)
+        {
+            var request = UnityWebRequest.Get("file://"+_path);
+            await AssetDownloader.LoadModelFromUri(request, OnLoad, OnMaterialsLoad, OnProgress, OnError);
+            //var parent = new GameObject("Restored model");
 
-        //GLTFast.GltfImport importer = new GLTFast.GltfImport();
-        //ImportSettings i = new ImportSettings();
+            //GLTFast.GltfImport importer = new GLTFast.GltfImport();
+            //importer.defaultMaterial = AppManager.Instance.DeserializeMaterial;
 
-        //await importer.LoadGltfBinary(d);
-        //await importer.InstantiateMainSceneAsync(parent.transform);
+            //await importer.LoadGltfBinary(d);
+            //await importer.InstantiateMainSceneAsync(parent.transform);
+        }
+        else
+        {
+            var d = File.ReadAllBytes(_path);
+            AppManager.Instance.LoadedModel = serializer.Deserialize(d, 0);
+        }
 
-        AppManager.Instance.LoadedModel = serializer.Deserialize(d, 0);
+        void OnError(IContextualizedError obj)
+        {
+            Debug.LogError($"An error occurred while loading your Model: {obj.GetInnerException()}");
+        }
+
+        void OnProgress(AssetLoaderContext assetLoaderContext, float progress)
+        {
+            Debug.Log($"Loading Model. Progress: {progress:P}");
+        }
+
+        void OnLoad(AssetLoaderContext assetLoaderContext)
+        {
+            //assetLoaderContext.RootGameObject.SetActive(false);
+            Debug.Log("Model loaded. Loading materials.");
+        }
+
+        void OnMaterialsLoad(AssetLoaderContext assetLoaderContext)
+        {
+            //assetLoaderContext.RootGameObject.SetActive(true);
+            //CachedPlayable = assetLoaderContext.RootGameObject;
+            //IsLoaded = true;
+
+            //LoadedEvent?.Invoke();
+        }
     }
 
 
